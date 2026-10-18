@@ -1,31 +1,38 @@
+import sqlite3
 import json
 import os
 import csv
 from datetime import datetime
 
-FILENAME = "products.json"
-SALES_FILE = "sales.json"
+DB_FILE = "shop.db"
+SALES_FILE = "sales.json" # Продажи пока оставим в JSON, чтобы не усложнять
 DATE_FILE = "last_date.txt"
+
+# --- ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ---
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    # Создаем таблицу товаров, если ее нет
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            category TEXT,
+            price REAL,
+            quantity INTEGER
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
 # --- СТАРТОВЫЙ ЭКРАН ---
 def show_start_screen():
     print("\n" * 2)
     print("╔" + "═" * 48 + "╗")
     print("║" + " " * 12 + "БИЗНЕС ПРИЛОЖЕНИЕ" + " " * 15 + "║")
-    print("║" + " " * 10 + "Версия 4.0 (Категории+)" + " " * 11 + "║")
+    print("║" + " " * 10 + "Версия 5.0 (SQLite)" + " " * 13 + "║")
     print("╚" + "═" * 48 + "╝")
-    print("\nДобро пожаловать! Программа готова к работе.\n")
-
-# --- ЗАГРУЗКА И СОХРАНЕНИЕ ---
-def load_data(filename):
-    if os.path.exists(filename):
-        with open(filename, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return []
-
-def save_data(data, filename):
-    with open(filename, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    print("\nДобро пожаловать! База данных готова к работе.\n")
 
 # --- АВТОМАТИЧЕСКИЙ СБРОС ОТЧЕТА ---
 def auto_reset_report():
@@ -34,179 +41,194 @@ def auto_reset_report():
         with open(DATE_FILE, "r") as f:
             last_date = f.read().strip()
         if last_date != today:
-            save_data([], SALES_FILE)
+            with open(SALES_FILE, "w", encoding="utf-8") as f:
+                json.dump([], f)
             with open(DATE_FILE, "w") as f:
                 f.write(today)
-            print("📅 Наступил новый день! Отчет за прошлый день сброшен автоматически.")
+            print("📅 Наступил новый день! Отчет за прошлый день сброшен.")
     else:
         with open(DATE_FILE, "w") as f:
             f.write(today)
 
 # --- ФУНКЦИИ МАГАЗИНА ---
-def add_product(products):
+def add_product():
     name = input("Введите название товара: ")
-    category = input("Введите категорию (например, Еда, Техника, Одежда): ")
+    category = input("Введите категорию: ")
     try:
-        price = float(input("Введите цену: "))
+        price = float(input("Ведите цену: "))
         quantity = int(input("Введите количество: "))
     except ValueError:
         print("❌ Ошибка: цена и количество должны быть числами!")
         return
-    product = {"name": name, "category": category, "price": price, "quantity": quantity}
-    products.append(product)
-    save_data(products, FILENAME)
-    print(f"✅ Товар '{name}' (Категория: {category}) успешно добавлен!")
+    
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO products (name, category, price, quantity) VALUES (?, ?, ?, ?)", 
+                   (name, category, price, quantity))
+    conn.commit()
+    conn.close()
+    print(f"✅ Товар '{name}' успешно добавлен в базу!")
 
-def show_products(products):
+def show_products():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, category, price, quantity FROM products")
+    products = cursor.fetchall()
+    conn.close()
+
     if not products:
         print("📭 Склад пуст.")
         return
-    low_stock = [p for p in products if p["quantity"] < 5]
+
+    # Проверка на низкий остаток
+    low_stock = [p for p in products if p[4] < 5]
     if low_stock:
-        print("\n⚠️  ВНИМАНИЕ! ТОВАРЫ С НИЗКИМ ОСТАТКОМ (меньше 5 шт):")
+        print("\n⚠  ВНИМАНИЕ! ТОВАРЫ С НИЗКИМ ОСТАТКОМ:")
         for p in low_stock:
-            print(f"   - {p['name']}: осталось {p['quantity']} шт.")
+            print(f"   - {p[1]}: осталось {p[4]} шт.")
         print("   Пора сделать заказ поставщику!\n")
 
-    print("\n" + "=" * 85)
-    print(f"{'НАЗВАНИЕ':<18} | {'КАТЕГОРИЯ':<12} | {'ЦЕНА':<10} | {'КОЛ-ВО':<8} | {'СУММА':<10}")
-    print("-" * 85)
+    print("\n" + "=" * 95)
+    print(f"{'ID':<4} | {'НАЗВАНИЕ':<18} | {'КАТЕГОРИЯ':<12} | {'ЦЕНА':<10} | {'КОЛ-ВО':<8} | {'СУММА':<10}")
+    print("-" * 95)
     for p in products:
-        total = p["price"] * p["quantity"]
-        cat = p.get("category", "Без кат.")
-        print(f"{p['name']:<18} | {cat:<12} | {p['price']:<10.2f} | {p['quantity']:<8} | {total:<10.2f}")
-    print("=" * 85 + "\n")
+        total = p[3] * p[4]
+        cat = p[2] if p[2] else "Без кат."
+        print(f"{p[0]:<4} | {p[1]:<18} | {cat:<12} | {p[3]:<10.2f} | {p[4]:<8} | {total:<10.2f}")
+    print("=" * 95 + "\n")
 
-# --- НОВАЯ ФУНКЦИЯ: ПОИСК ПО КАТЕГОРИЯМ ---
-def search_by_category(products):
-    if not products:
-        print("📭 Склад пуст.")
-        return
-    
-    # Собираем уникальные категории и считаем количество товаров в каждой
-    categories = {}
-    for p in products:
-        cat = p.get("category", "Без кат.")
-        if cat not in categories:
-            categories[cat] = 0
-        categories[cat] += 1
-    
-    # Показываем список категорий
-    print("\n=== ДОСТУПНЫЕ КАТЕГОРИИ ===")
-    cat_list = list(categories.keys())
-    for i, cat in enumerate(cat_list, 1):
-        print(f"{i}. {cat} (товаров: {categories[cat]})")
-    
-    try:
-        choice = int(input("Выберите номер категории: "))
-        if choice < 1 or choice > len(cat_list):
-            print("❌ Неверный номер.")
-            return
-        
-        selected_cat = cat_list[choice - 1]
-        
-        # Фильтруем товары по категории
-        filtered = [p for p in products if p.get("category", "Без кат.") == selected_cat]
-        
-        if not filtered:
-            print(f"📭 В категории '{selected_cat}' нет товаров.")
-            return
-        
-        print(f"\n--- Товары в категории '{selected_cat}' ({len(filtered)} шт.) ---")
-        print(f"{'№':<4} | {'НАЗВАНИЕ':<20} | {'ЦЕНА':<10} | {'КОЛ-ВО':<8} | {'СУММА':<10}")
-        print("-" * 75)
-        for i, p in enumerate(filtered, 1):
-            total = p["price"] * p["quantity"]
-            print(f"{i:<4} | {p['name']:<20} | {p['price']:<10.2f} | {p['quantity']:<8} | {total:<10.2f}")
-        print("-" * 75)
-        
-        # Предлагаем найти конкретный товар внутри категории
-        search_query = input("\nХотите найти конкретный товар в этой категории? (Enter - пропустить): ").strip().lower()
-        if search_query:
-            # Ищем внутри уже отфильтрованного списка
-            found = [p for p in filtered if search_query in p["name"].lower()]
-            if found:
-                print(f"\n🔍 Найдено {len(found)} товаров:")
-                for p in found:
-                    print(f"   {p['name']} | Цена: {p['price']:.2f} | В наличии: {p['quantity']}")
-            else:
-                print("🔍 Ничего не найдено.")
-    
-    except ValueError:
-        print("❌ Ошибка: введите число.")
-
-def search_product(products):
+def search_product():
     query = input("Введите название или категорию для поиска: ").lower()
-    found = [p for p in products if query in p["name"].lower() or query in p.get("category", "").lower()]
-    if not found:
+    
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    # Используем LIKE для поиска частичного совпадения
+    cursor.execute("SELECT id, name, category, price, quantity FROM products WHERE LOWER(name) LIKE ? OR LOWER(category) LIKE ?", 
+                   (f'%{query}%', f'%{query}%'))
+    results = cursor.fetchall()
+    conn.close()
+
+    if not results:
         print("🔍 Товар не найден.")
         return
+    
     print("\n--- Результаты поиска ---")
-    for p in found:
-        print(f"{p['name']} | Категория: {p.get('category', 'Без кат.')} | Цена: {p['price']:.2f} | В наличии: {p['quantity']}")
+    for p in results:
+        cat = p[2] if p[2] else "Без кат."
+        print(f"ID: {p[0]} | {p[1]} | Категория: {cat} | Цена: {p[3]:.2f} | В наличии: {p[4]}")
     print("-------------------------\n")
+def edit_product():
+    try:
+        prod_id = int(input("Введите ID товара для редактирования: "))
+    except ValueError:
+        print("❌ Ошибка: ID должен быть числом.")
+        return
 
-def edit_product(products):
-    name = input("Введите название товара для редактирования: ").lower()
-    for p in products:
-        if p["name"].lower() == name:
-            print(f"Текущая цена: {p['price']:.2f}, Текущее количество: {p['quantity']}")
-            try:
-                new_price = float(input("Введите новую цену (или 0, чтобы оставить старую): "))
-                if new_price > 0:
-                    p["price"] = new_price
-                new_quantity = int(input("Введите новое количество (или -1, чтобы оставить старое): "))
-                if new_quantity >= 0:
-                    p["quantity"] = new_quantity
-                save_data(products, FILENAME)
-                print("✅ Товар успешно отредактирован!")
-                return
-            except ValueError:
-                print("❌ Ошибка: введите числа!")
-                return
-    print("❌ Товар не найден.")
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT price, quantity FROM products WHERE id = ?", (prod_id,))
+    product = cursor.fetchone()
 
-def delete_product(products):
-    name = input("Введите название товара для удаления: ").lower()
-    for i, p in enumerate(products):
-        if p["name"].lower() == name:
-            deleted = products.pop(i)
-            save_data(products, FILENAME)
-            print(f"🗑️ Товар '{deleted['name']}' удален со склада.")
+    if not product:
+        print("❌ Товар с таким ID не найден.")
+        conn.close()
+        return
+
+    print(f"Текущая цена: {product[0]:.2f}, Текущее количество: {product[1]}")
+    try:
+        new_price = float(input("Введите новую цену (или 0, чтобы оставить старую): "))
+        new_quantity = int(input("Введите новое количество (или -1, чтобы оставить старое): "))
+        
+        # Обновляем только то, что нужно
+        if new_price > 0:
+            cursor.execute("UPDATE products SET price = ? WHERE id = ?", (new_price, prod_id))
+        if new_quantity >= 0:
+            cursor.execute("UPDATE products SET quantity = ? WHERE id = ?", (new_quantity, prod_id))
+            
+        conn.commit()
+        print("✅ Товар успешно отредактирован!")
+    except ValueError:
+        print("❌ Ошибка: введите числа!")
+    finally:
+        conn.close()
+
+def delete_product():
+    try:
+        prod_id = int(input("Введите ID товара для удаления: "))
+    except ValueError:
+        print("❌ Ошибка: ID должен быть числом.")
+        return
+
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM products WHERE id = ?", (prod_id,))
+    conn.commit()
+    
+    if cursor.rowcount > 0:
+        print(f"🗑 Товар с ID {prod_id} удален.")
+    else:
+        print("❌ Товар с таким ID не найден.")
+    conn.close()
+
+def sell_product():
+    try:
+        prod_id = int(input("Введите ID товара для продажи: "))
+    except ValueError:
+        print("❌ Ошибка: ID должен быть числом.")
+        return
+
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT name, category, price, quantity FROM products WHERE id = ?", (prod_id,))
+    product = cursor.fetchone()
+
+    if not product:
+        print("❌ Товар не найден.")
+        conn.close()
+        return
+
+    name, category, price, current_qty = product
+    
+    try:
+        amount = int(input(f"Сколько продаем? (в наличии {current_qty}): "))
+        if amount > current_qty:
+            print("❌ Недостаточно товара на складе!")
+            conn.close()
             return
-    print("❌ Товар не найден.")
+        
+        # Обновляем остаток в базе
+        cursor.execute("UPDATE products SET quantity = quantity - ? WHERE id = ?", (amount, prod_id))
+        conn.commit()
+        conn.close()
 
-def sell_product(products):
-    name = input("Введите название товара для продажи: ").lower()
-    for p in products:
-        if p["name"].lower() == name:
-            try:
-                amount = int(input(f"Сколько продаем? (в наличии {p['quantity']}): "))
-                if amount > p["quantity"]:
-                    print("❌ Недостаточно товара на складе!")
-                    return
-                p["quantity"] -= amount
-                save_data(products, FILENAME)
-                sales = load_data(SALES_FILE)
-                sales.append({
-                    "name": p["name"], 
-                    "category": p.get("category", "Без кат."),
-                    "amount": amount, 
-                    "total": p["price"] * amount
-                })
-                save_data(sales, SALES_FILE)
-                print(f"💰 Продажа успешна! Выручка: {p['price'] * amount:.2f}")
-                return
-            except ValueError:
-                print("❌ Ошибка: введите число!")
-                return
-    print("❌ Товар не найден.")
+        # Записываем продажу в JSON
+        with open(SALES_FILE, "r", encoding="utf-8") as f:
+            sales = json.load(f)
+        
+        sales.append({
+            "name": name, 
+            "category": category if category else "Без кат.",
+            "amount": amount, 
+            "total": price * amount
+        })
+        
+        with open(SALES_FILE, "w", encoding="utf-8") as f:
+            json.dump(sales, f, ensure_ascii=False, indent=4)
+            
+        print(f"💰 Продажа успешна! Выручка: {price * amount:.2f}")
+        
+    except ValueError:
+        print("❌ Ошибка: введите число!")
+        conn.close()
 
 def daily_report():
-    sales = load_data(SALES_FILE)
+    with open(SALES_FILE, "r", encoding="utf-8") as f:
+        sales = json.load(f)
+        
     if not sales:
         print("📊 Сегодня продаж еще не было.")
         return
+    
     total_revenue = sum(s["total"] for s in sales)
     print("\n" + "=" * 65)
     print("📊 ОТЧЕТ О ПРОДАЖАХ ЗА СЕГОДНЯ")
@@ -217,15 +239,18 @@ def daily_report():
     print("-" * 65)
     print(f"💰 ОБЩАЯ ВЫРУЧКА: {total_revenue:.2f}")
     print("=" * 65 + "\n")
-
-# --- ЭКСПОРТ В CSV ---
+    # --- ЭКСПОРТ В CSV ---
 def export_to_csv():
-    sales = load_data(SALES_FILE)
+    with open(SALES_FILE, "r", encoding="utf-8") as f:
+        sales = json.load(f)
+        
     if not sales:
         print("📊 Нет данных для экспорта. Сначала сделайте продажи.")
         return
+    
     date_str = datetime.now().strftime("%Y-%m-%d_%H-%M")
     filename = f"report_{date_str}.csv"
+    
     try:
         with open(filename, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f, delimiter=';')
@@ -237,55 +262,54 @@ def export_to_csv():
         print(f"❌ Ошибка при экспорте: {e}")
 
 def manual_reset():
-    confirm = input("⚠️ Вы уверены, что хотите сбросить отчет за день? (да/нет): ").lower()
+    confirm = input("⚠ Вы уверены, что хотите сбросить отчет за день? (да/нет): ").lower()
     if confirm == "да":
-        save_data([], SALES_FILE)
+        with open(SALES_FILE, "w", encoding="utf-8") as f:
+            json.dump([], f)
         print("✅ Отчет за день успешно сброшен.")
     else:
         print("❌ Сброс отменен.")
 
 # --- ГЛАВНОЕ МЕНЮ ---
 def main():
+    init_db() # Создаем базу при запуске
     auto_reset_report()
     show_start_screen()
-    products = load_data(FILENAME)
+    
     while True:
-        print("\n=== БИЗНЕС ПРИЛОЖЕНИЕ v4.0 ===")
+        print("\n=== БИЗНЕС ПРИЛОЖЕНИЕ v5.0 (SQLite) ===")
         print("1. Добавить товар")
         print("2. Показать все товары")
-        print("3. Найти товар (по названию/категории)")
-        print("4. Показать по категориям (с фильтром)") # НОВЫЙ ПУНКТ
-        print("5. Продать товар")
-        print("6. Редактировать товар")
-        print("7. Удалить товар")
-        print("8. Отчет за день")
-        print("9. Экспорт отчета в CSV (Excel)")
-        print("10. Сбросить отчет вручную")
-        print("11. Выход")
+        print("3. Найти товар")
+        print("4. Продать товар (по ID)")
+        print("5. Редактировать товар (по ID)")
+        print("6. Удалить товар (по ID)")
+        print("7. Отчет за день")
+        print("8. Экспорт отчета в CSV (Excel)")
+        print("9. Сбросить отчет вручную")
+        print("10. Выход")
         
         choice = input("Выберите действие: ")
         
         if choice == "1":
-            add_product(products)
+            add_product()
         elif choice == "2":
-            show_products(products)
+            show_products()
         elif choice == "3":
-            search_product(products)
+            search_product()
         elif choice == "4":
-            search_by_category(products)  # Вызов новой функции
+            sell_product()
         elif choice == "5":
-            sell_product(products)
+            edit_product()
         elif choice == "6":
-            edit_product(products)
+            delete_product()
         elif choice == "7":
-            delete_product(products)
-        elif choice == "8":
             daily_report()
-        elif choice == "9":
+        elif choice == "8":
             export_to_csv()
-        elif choice == "10":
+        elif choice == "9":
             manual_reset()
-        elif choice == "11":
+        elif choice == "10":
             print("До свидания! Хорошего дня!")
             break
         else:
