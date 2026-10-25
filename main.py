@@ -2,6 +2,8 @@ import sqlite3
 import json
 import os
 import csv
+import pandas as pd
+import matplotlib.pyplot as plt
 from datetime import datetime
 
 DB_FILE = "shop.db"
@@ -287,7 +289,8 @@ def main():
         print("7. Отчет за день")
         print("8. Экспорт отчета в CSV (Excel)")
         print("9. Сбросить отчет вручную")
-        print("10. Выход")
+        print("10. Показать график (Pandas)")
+        print("11. Выход")
         
         choice = input("Выберите действие: ")
         
@@ -310,10 +313,38 @@ def main():
         elif choice == "9":
             manual_reset()
         elif choice == "10":
+            show_graph()
+        elif choice == "11":
             print("До свидания! Хорошего дня!")
             break
         else:
             print("❌ Неверный выбор, попробуйте снова.")
+
+def show_graph():
+    # Подключаемся к базе
+    conn = sqlite3.connect(DB_FILE)
+    
+    # Забираем все товары в таблицу Pandas
+    df = pd.read_sql_query("SELECT category, price, quantity FROM products", conn)
+    conn.close()
+    
+    if df.empty:
+        print("📭 Нет данных для графика.")
+        return
+        
+    # Считаем общую стоимость склада по каждой категории (цена * количество)
+    df['total_value'] = df['price'] * df['quantity']
+    
+    # Группируем по категориям и суммируем
+    summary = df.groupby('category')['total_value'].sum()
+    
+    # Рисуем график
+    print("📊 Рисуем график... (закройте окно с графиком, чтобы вернуться в меню)")
+    summary.plot(kind='bar', color=['blue', 'green', 'orange', 'red'], title="Стоимость товаров на складе по категориям")
+    plt.ylabel("Сумма (в деньгах)")
+    plt.xlabel("Категория")
+    plt.xticks(rotation=0) # Чтобы названия категорий не наклонялись
+    plt.show()
 
 if __name__ == "__main__":
     main()
